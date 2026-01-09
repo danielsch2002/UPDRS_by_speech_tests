@@ -5,7 +5,9 @@ dependencies = [
     "pandas",
     "numpy",
     "matplotlib",
-    "scikit-learn"
+    "scikit-learn",
+    "seaborn",
+    "scipy"
 ]
 
 [project.optional-dependencies]

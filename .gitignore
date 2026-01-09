@@ -1,6 +1,15 @@
+# 1. Ignore the Virtual Environment (This is specific to your machine)
 venv/
 .idea/
+
+# 2. Ignore Python "compiled" files (Junk files)
 __pycache__/
-data/
-results/
 *.pyc
+
+# 3. Ignore Mac system files
+.DS_Store
+
+# 4. Ignore Data and Outputs (Keep the repo "Unrun")
+data/
+reports/
+figures/
