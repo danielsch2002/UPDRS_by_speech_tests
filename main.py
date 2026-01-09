@@ -2,20 +2,21 @@
 Main Execution Entry Point
 --------------------------
 This script responsible for the entire Parkinson's Telemonitoring analysis pipeline.
-It ensures the environment is ready, fetches raw data, processes it,
-and generates exploratory statistical reports and visualizations.
+It handles environment setup, data acquisition, preprocessing, exploratory
+analysis, and predictive modeling (LS, IRLS, and CART).
 """
 
-from src import dataset, fetch, exploration
+from sklearn.model_selection import train_test_split
+from src import dataset, fetch, exploration, modeling
 from src.config import Paths
 from src.logger import logger_inst
 
+paths = Paths.from_here()
 
 def setup_environment() -> None:
     """
     Ensures that all necessary project directories exist before execution.
     """
-    paths = Paths.from_here()
 
     # List of all directories needed for the pipeline
     required_folders = [
@@ -33,7 +34,7 @@ def setup_environment() -> None:
 
 def main() -> None:
     """
-    The data science pipeline stages.
+    The Tsanas et al. (2010) pipeline stages.
     """
     logger_inst.info("=== Starting UPDRS Analysis Pipeline ===")
 
@@ -56,12 +57,18 @@ def main() -> None:
         logger_inst.info("Stage 3: Executing Statistical Exploration...")
         exploration.generate_exploration()
 
+        # Stage 4: Modeling
+        logger_inst.info("Stage 4: Modeling...")
+        modeling.run_modeling_pipeline(
+            input_path=paths.data_processed / "parkinsons_normalized.csv",
+            output_tables=paths.tables,
+            output_figures=paths.figures
+        )
+
         logger_inst.info("=== Pipeline Completed Successfully ===")
 
     except Exception as error:
-        logger_inst.critical("Pipeline failed during execution!")
-        logger_inst.error("Error details: %s", str(error))
-        # Re-raising the error ensures we know exactly where it crashed
+        logger_inst.critical(f"Pipeline failed: {error}")
         raise
 
 
