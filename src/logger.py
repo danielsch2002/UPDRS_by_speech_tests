@@ -4,7 +4,7 @@ import sys
 """
 Logging Configuration Module
 ----------------------------
-This section initializes the project-wide logger. 
+This section initializes the project logger. 
 It uses a StreamHandler to direct output to the console (stdout) 
 and a Formatter to ensure all logs include timestamps and severity levels.
 """
@@ -27,8 +27,3 @@ log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(me
 # 5. Apply the formatter to the handler and add the handler to the logger
 console_handler.setFormatter(log_formatter)
 logger_inst.addHandler(console_handler)
-
-"""
-Note: We do not wrap this in a class because the logging module 
-is designed to be used as a global singleton across the package.
-"""
