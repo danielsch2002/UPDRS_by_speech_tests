@@ -11,7 +11,7 @@ from __future__ import annotations
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from sklearn.model_selection import cross_validate, GroupShuffleSplit
+from sklearn.model_selection import cross_validate, GroupShuffleSplit, RepeatedKFold
 from sklearn.linear_model import LinearRegression, HuberRegressor
 from sklearn.tree import DecisionTreeRegressor, plot_tree
 import matplotlib
@@ -29,7 +29,7 @@ def get_model_definitions() -> list[tuple[object, str]]:
         # High tolerance: Stops even if precision is loose
         # Stronger regularization to stabilize multicollinearity
         (HuberRegressor(max_iter=10000, tol=1e-1, alpha=0.1, warm_start=True), "IRLS (Robust)"),
-        (DecisionTreeRegressor(random_state=42, max_depth=5), "CART (Non-linear)")
+        (DecisionTreeRegressor(random_state=42, max_depth=3), "CART (Non-linear)")
     ]
 
 
@@ -43,7 +43,7 @@ def visualize_cart_tree(model: DecisionTreeRegressor, features: list[str], outpu
         filled=True,
         rounded=True,
         fontsize=10,
-        max_depth=5
+        max_depth=3
     )
     plt.title("CART Decision Tree Structure")
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
@@ -52,7 +52,7 @@ def visualize_cart_tree(model: DecisionTreeRegressor, features: list[str], outpu
 
 def _generate_final_visualization(df: pd.DataFrame, features: list[str], output_dir: Path) -> None:
     """Helper to train and visualize the final CART model on the full dataset."""
-    final_cart = DecisionTreeRegressor(random_state=42, max_depth=5)
+    final_cart = DecisionTreeRegressor(random_state=42, max_depth=3)
     final_cart.fit(df[features], df["total_UPDRS"])
 
     visualize_cart_tree(
@@ -62,15 +62,12 @@ def _generate_final_visualization(df: pd.DataFrame, features: list[str], output_
     )
 
 
-def run_cv_for_model(model_obj, X, y, groups, gss):
-    """
-    Executes subject-wise cross-validation.
-    Groups ensure that all samples from a single patient stay in the same fold.
-    """
+def run_cv_logic(model_obj, X, y, cv_generator, groups=None) -> dict:
+    """Executes cross-validation for the given split method."""
     cv_results = cross_validate(
         model_obj, X, y,
         groups=groups,
-        cv=gss,
+        cv=cv_generator,
         scoring='neg_mean_absolute_error',
         return_train_score=True,
         n_jobs=2
@@ -87,7 +84,7 @@ def run_modeling_pipeline(input_path: Path, output_tables: Path, output_figures:
     Coordinates the 1,000-iteration Subject-Wise CV pipeline.
     Uses GroupShuffleSplit to maintain patient independence between Train/Test.
     """
-    logger_inst.info("Starting Subject-Wise pipeline with 1,000 iterations.")
+    logger_inst.info("Starting Subject-Wise and Random splitting with 1,000 iterations.")
 
     df = pd.read_csv(input_path)
     features = [c for c in df.columns if
@@ -97,8 +94,12 @@ def run_modeling_pipeline(input_path: Path, output_tables: Path, output_figures:
     # Identify patient groups to prevent data leakage
     groups = df["subject_id"]
 
-    # GroupShuffleSplit ensures 10% of subjects (not rows) are held out per iteration
-    gss = GroupShuffleSplit(n_splits=1000, test_size=0.1, random_state=42)
+    # GroupShuffleSplit ensures 10% of subjects are held out per iteration
+    # RepeatedKFold for random split like implemented in Tsanas et al. (2010).
+    cv_methods = [
+        (RepeatedKFold(n_splits=10, n_repeats=1000, random_state=42), "Random", None),
+        (GroupShuffleSplit(n_splits=1000, test_size=0.1, random_state=42), "Subject-Wise", groups)
+    ]
 
     all_results = []
 
@@ -106,17 +107,26 @@ def run_modeling_pipeline(input_path: Path, output_tables: Path, output_figures:
         logger_inst.info(f"Processing target: {target_col}")
         X, y = df[features], df[target_col]
 
-        for model_obj, model_name in get_model_definitions():
-            logger_inst.info(f"Running 1,000 subject-wise iterations for {model_name}...")
-            metrics = run_cv_for_model(model_obj, X, y, groups, gss)
-            all_results.append({"Target": target_col, "Model": model_name, **metrics})
+        for cv_gen, method_name, grp in cv_methods:
+            logger_inst.info(f"Evaluating {method_name} splitting for {target_col}...")
 
-    # Saving Results
+            for model_obj, model_name in get_model_definitions():
+                logger_inst.info(f"Running 1,000 subject-wise iterations for {model_name}...")
+                metrics = run_cv_logic(model_obj, X, y, cv_gen, groups=grp)
+                all_results.append({
+                    "Method": method_name,
+                    "Target": target_col,
+                    "Model": model_name,
+                    **metrics
+                })
+
+    # Results Table
     results_df = pd.DataFrame(all_results)
-    print(f"\n{'=' * 75}\nSUBJECT-WISE REPRODUCTION TABLE: 1,000 ITERATIONS\n{'=' * 75}")
+    print(f"\n{'=' * 85}\nFINAL COMPARISON: 1,000 REPEATS (Random vs Subject-Wise)\n{'=' * 85}")
     print(results_df.to_string(index=False))
 
-    results_df.to_csv(output_tables / "table_III_subject_wise_cv.csv", index=False)
+    # Save results
+    results_df.to_csv(output_tables / "combined_cv_results.csv", index=False)
 
     # Visualization
     _generate_final_visualization(df, features, output_figures)
