@@ -29,7 +29,8 @@ def get_model_definitions() -> list[tuple[object, str]]:
         # High tolerance: Stops even if precision is loose
         # Stronger regularization to stabilize multicollinearity
         (HuberRegressor(max_iter=10000, tol=1e-1, alpha=0.1, warm_start=True), "IRLS (Robust)"),
-        (DecisionTreeRegressor(random_state=42, max_depth=3), "CART (Non-linear)")
+        # ccp_alpha handles pruning dynamically as per Tsanas et al. methodology
+        (DecisionTreeRegressor(random_state=42, ccp_alpha=0.01), "CART (Non-linear)")
     ]
 
 
@@ -43,7 +44,7 @@ def visualize_cart_tree(model: DecisionTreeRegressor, features: list[str], outpu
         filled=True,
         rounded=True,
         fontsize=10,
-        max_depth=3
+        max_depth=4
     )
     plt.title("CART Decision Tree Structure")
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
@@ -52,7 +53,7 @@ def visualize_cart_tree(model: DecisionTreeRegressor, features: list[str], outpu
 
 def _generate_final_visualization(df: pd.DataFrame, features: list[str], output_dir: Path) -> None:
     """Helper to train and visualize the final CART model on the full dataset."""
-    final_cart = DecisionTreeRegressor(random_state=42, max_depth=3)
+    final_cart = DecisionTreeRegressor(random_state=42, ccp_alpha=0.01)
     final_cart.fit(df[features], df["total_UPDRS"])
 
     visualize_cart_tree(
