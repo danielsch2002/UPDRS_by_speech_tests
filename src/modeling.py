@@ -1,10 +1,7 @@
 """
 Predictive Modeling Module
 --------------------------
-Implements regression models as per Tsanas et al. (2010):
-I.   Least Squares (LS) - Standard Linear Regression.
-II.  Iteratively Reweighted LS (IRLS) - Robust Regression (Huber Regressor).
-IV.  Non-Linear: Classification And Regression Trees (CART).
+Implements regression models as per Tsanas et al. (2010).
 """
 
 from __future__ import annotations
@@ -12,26 +9,33 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from sklearn.model_selection import cross_validate, GroupShuffleSplit, RepeatedKFold
-from sklearn.linear_model import LinearRegression, HuberRegressor
+from sklearn.linear_model import LinearRegression, HuberRegressor, Lasso
 from sklearn.tree import DecisionTreeRegressor, plot_tree
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from src.config import Paths
 
 from src.logger import logger_inst
 
 
-def get_model_definitions() -> list[tuple[object, str]]:
-    """Returns the standardized models used in the reproduction study."""
-    return [
-        (LinearRegression(), "Least Squares (LS)"),
-        # Maximum iterations to allow enough time
-        # High tolerance: Stops even if precision is loose
-        # Stronger regularization to stabilize multicollinearity
-        (HuberRegressor(max_iter=10000, tol=1e-1, alpha=0.1, warm_start=True), "IRLS (Robust)"),
-        # ccp_alpha handles pruning dynamically as per Tsanas et al. methodology
-        (DecisionTreeRegressor(random_state=42, ccp_alpha=0.01), "CART (Non-linear)")
-    ]
+def get_model_definitions(model_names: list[str]) -> list[tuple[object, str]]:
+    """
+    Returns only the models requested by the pipeline.
+
+    Args:
+        model_names: List of strings like ["LS", "IRLS", "LASSO", "CART"]
+    """
+    # Mapping string names to actual model objects and display names
+    all_models = {
+        "LS": (LinearRegression(), "Least Squares (LS)"),
+        "IRLS": (HuberRegressor(max_iter=10000, tol=1e-1, alpha=0.1, warm_start=True), "IRLS (Robust)"),
+        "LASSO": (Lasso(alpha=Paths.LASSO_ALPHA_OPTIMAL, max_iter=10000), "LASSO"),
+        "CART": (DecisionTreeRegressor(random_state=42, ccp_alpha=0.01), "CART (Non-linear)")
+    }
+
+    # Filter and return only requested models in the order they appear in model_names
+    return [all_models[name] for name in model_names if name in all_models]
 
 
 def visualize_cart_tree(model: DecisionTreeRegressor, features: list[str], output_path: Path) -> None:
@@ -80,23 +84,19 @@ def run_cv_logic(model_obj, X, y, cv_generator, groups=None) -> dict:
     }
 
 
-def run_modeling_pipeline(input_path: Path, output_tables: Path, output_figures: Path) -> None:
+def run_modeling_pipeline(models: list[str], input_path: Path, output_tables: Path, output_figures: Path) -> None:
     """
-    Coordinates the 1,000-iteration Subject-Wise CV pipeline.
-    Uses GroupShuffleSplit to maintain patient independence between Train/Test.
+    Coordinates the 1,000-iteration Subject-Wise and Random CV pipeline.
     """
-    logger_inst.info("Starting Subject-Wise and Random splitting with 1,000 iterations.")
+    logger_inst.info(f"Starting Modeling Pipeline for: {models}")
 
     df = pd.read_csv(input_path)
-    features = [c for c in df.columns if
-                c not in ["subject_id", "age", "sex", "test_time", "motor_UPDRS", "total_UPDRS"]]
-    targets = ["motor_UPDRS", "total_UPDRS"]
 
-    # Identify patient groups to prevent data leakage
+    # Use features not in SKIP_COLS logic
+    features = [c for c in df.columns if c not in Paths.SKIP_COLS]
+    targets = ["motor_UPDRS", "total_UPDRS"]
     groups = df["subject_id"]
 
-    # GroupShuffleSplit ensures 10% of subjects are held out per iteration
-    # RepeatedKFold for random split like implemented in Tsanas et al. (2010).
     cv_methods = [
         (RepeatedKFold(n_splits=10, n_repeats=1000, random_state=42), "Random", None),
         (GroupShuffleSplit(n_splits=1000, test_size=0.1, random_state=42), "Subject-Wise", groups)
@@ -111,8 +111,9 @@ def run_modeling_pipeline(input_path: Path, output_tables: Path, output_figures:
         for cv_gen, method_name, grp in cv_methods:
             logger_inst.info(f"Evaluating {method_name} splitting for {target_col}...")
 
-            for model_obj, model_name in get_model_definitions():
-                logger_inst.info(f"Running 1,000 subject-wise iterations for {model_name}...")
+            # Pass the list of models from the pipeline call to get definitions
+            for model_obj, model_name in get_model_definitions(models):
+                logger_inst.info(f"Running iterations for {model_name}...")
                 metrics = run_cv_logic(model_obj, X, y, cv_gen, groups=grp)
                 all_results.append({
                     "Method": method_name,
@@ -121,14 +122,13 @@ def run_modeling_pipeline(input_path: Path, output_tables: Path, output_figures:
                     **metrics
                 })
 
-    # Results Table
+    # Saving results
     results_df = pd.DataFrame(all_results)
-    print(f"\n{'=' * 85}\nFINAL COMPARISON: 1,000 REPEATS (Random vs Subject-Wise)\n{'=' * 85}")
-    print(results_df.to_string(index=False))
+    suffix = "_".join(models).lower()
+    results_df.to_csv(output_tables / f"modeling_results_{suffix}.csv", index=False)
 
-    # Save results
-    results_df.to_csv(output_tables / "combined_cv_results.csv", index=False)
+    # Visualization (only if CART was requested)
+    if "CART" in models:
+        _generate_final_visualization(df, features, output_figures)
 
-    # Visualization
-    _generate_final_visualization(df, features, output_figures)
     logger_inst.info("Pipeline completed successfully.")

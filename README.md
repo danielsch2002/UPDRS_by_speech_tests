@@ -15,10 +15,15 @@ This project aims to analyze and predict **UPDRS (Unified Parkinson's Disease Ra
 - `pyproject.toml`: Project metadata and dependencies.
 
 ## Key Stages
-1. **Data Import**: Loading CSV files and verifying data integrity.
-2. **Processing**: Handling missing values, normalizing speech features, and outlier detection.
-3. **Modeling**: Running regression models to predict UPDRS scores.
-4. **Analysis & Visualization**: Generating correlation matrices and trend graphs.
+1. **Data Acquisition**: Automated fetching from the UCI Machine Learning Repository.
+2. **Preprocessing**: Min-Max scaling and outlier detection.
+3. **Exploration**: Statistical analysis and correlation mapping.
+4. **Modeling**: Comparison of LS, IRLS, LASSO, and CART models.
+5. **Feature Selection**: Identifying the 6 most parsimonious features using LASSO and AIC/BIC criteria.
+6. **Model Validation**: Re-evaluating models on the reduced 6-feature set to confirm minimal loss in predictive accuracy.
+
+## Instructions for Running
+1. **Clone the repository:**
 
 ## Paper Link
 The paper reproduced in this project can be found here: [https://ieeexplore.ieee.org/document/5339170].
