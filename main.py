@@ -6,8 +6,7 @@ It handles environment setup, data acquisition, preprocessing, exploratory
 analysis, and predictive modeling (LS, IRLS, and CART).
 """
 
-from sklearn.model_selection import train_test_split
-from src import dataset, fetch, exploration, modeling
+from src import dataset, fetch, exploration, modeling, lasso_selection
 from src.config import Paths
 from src.logger import logger_inst
 
@@ -57,12 +56,28 @@ def main() -> None:
         logger_inst.info("Stage 3: Executing Statistical Exploration...")
         exploration.generate_exploration()
 
-        # Stage 4: Modeling
+        # Stage 4: Modeling (All features)
         logger_inst.info("Stage 4: Modeling...")
         modeling.run_modeling_pipeline(
+            models=["LS, IRLS, LASSO, CART"],
             input_path=paths.data_processed / "parkinsons_normalized.csv",
             output_tables=paths.tables,
             output_figures=paths.figures
+        )
+
+        # Stage 5: LASSO Feature Selection (AIC vs BIC)
+        logger_inst.info("Stage 5: Executing LASSO Feature Selection...")
+        lasso_selection.run_lasso_pipeline(
+            input_path=paths.data_processed / "parkinsons_normalized.csv",
+            output_tables=paths.tables
+        )
+
+        # Stage 6: IRLS And CART Mondeling on best features extracted list.
+        logger_inst.info("Stage 6: IRLS And CART Mondeling on best features extracted list...")
+        modeling.run_modeling_pipeline(
+            models = ["IRLS, CART"],
+            input_path=paths.data_processed / "best_features_parkinsons_normalized.csv",
+            output_tables=paths.tables
         )
 
         logger_inst.info("=== Pipeline Completed Successfully ===")
