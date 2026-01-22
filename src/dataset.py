@@ -8,11 +8,11 @@ Tsanas et al. (2010), it performs column renaming and feature scaling.
 
 from __future__ import annotations
 from pathlib import Path
-
 import pandas as pd
+import numpy as np
 from sklearn.preprocessing import MinMaxScaler
-
 from src.config import Paths
+
 from src.logger import logger_inst
 
 
@@ -36,42 +36,38 @@ def load_raw_data(input_path: Path) -> pd.DataFrame:
     logger_inst.info("Loading raw dataset for processing...")
     return pd.read_csv(input_path)
 
-
 def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Cleans column names and normalizes dysphonia features.
-
-    Normalization is performed using Min-Max scaling to the [0, 1] range
-    to ensure feature parity during statistical analysis.
-
-    Args:
-        df (pd.DataFrame): The raw input dataframe.
-
-    Returns:
-        pd.DataFrame: The processed dataframe with normalized features.
+    Cleans column names, applies Log Transform to skewed features,
+    and normalizes dysphonia features using Min-Max scaling.
     """
     # 1. Standardize identifier column names
     if "subject#" in df.columns:
         df = df.rename(columns={"subject#": "subject_id"})
-        logger_inst.debug("Renamed 'subject#' to 'subject_id'.")
 
     # 2. Define column groups
-    # Metadata and targets are kept in their original scale
     metadata_and_targets = [
         "subject_id", "age", "sex", "test_time", "motor_UPDRS", "total_UPDRS"
     ]
-
-    # Identify numerical dysphonia features for scaling
     feature_cols = [c for c in df.columns if c not in metadata_and_targets]
 
     if not feature_cols:
-        logger_inst.error("No features identified for normalization.")
         raise ValueError("Feature selection failed: No dysphonia measures found.")
 
-    logger_inst.info("Normalizing %d dysphonia features using Min-Max scaling [0, 1]...", len(feature_cols))
+    # 3. Apply Log Transform to skewed features (|skew| > 1.5)
+    # This reduces the impact of outliers and helps MinMaxScaler spread the data better.
+    # Using log1p (log(1+x)) to handle any potential zero values safely.
+    skew_series = df[feature_cols].skew()
+    high_skew_feats = skew_series[abs(skew_series) > 1.5].index
 
-    # 3. Apply Min-Max Normalization
-    # Rescales features such that the minimum value is 0 and maximum is 1
+    if not high_skew_feats.empty:
+        logger_inst.info("Applying Log Transform to %d skewed features: %s",
+                         len(high_skew_feats), list(high_skew_feats))
+        df[high_skew_feats] = np.log1p(df[high_skew_feats])
+
+    # 4. Apply Min-Max Normalization [0, 1]
+    # Now that skewed data is "compressed", the [0, 1] range will be more informative.
+    logger_inst.info("Normalizing %d features using Min-Max scaling...", len(feature_cols))
     scaler = MinMaxScaler(feature_range=(0, 1))
     df[feature_cols] = scaler.fit_transform(df[feature_cols])
 
