@@ -2,6 +2,7 @@
 Predictive Modeling Module
 --------------------------
 Implements regression models as per Tsanas et al. (2010).
+Supports baseline evaluations and comparative parsimony analysis.
 """
 
 from __future__ import annotations
@@ -15,120 +16,74 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
-from src.config import Paths
 
+from src.config import Config
 from src.logger import logger_inst
 
 
 def get_model_definitions(model_names: list[str]) -> list[tuple[object, str]]:
-    """Returns requested model objects with their descriptive names."""
+    """Returns requested model objects initialized with Config settings."""
     all_models = {
         "LS": (LinearRegression(), "LS"),
-        "IRLS": (HuberRegressor(max_iter=10000, tol=1e-1, alpha=0.1, warm_start=True), "IRLS"),
-        "LASSO": (Lasso(alpha=Paths.LASSO_ALPHA_OPTIMAL, max_iter=10000), "LASSO"),
-        "CART": (DecisionTreeRegressor(random_state=42, max_depth=4), "CART")
+        "IRLS": (HuberRegressor(
+            max_iter=Config.IRLS_MAX_ITER,
+            tol=Config.IRLS_TOL,
+            alpha=Config.IRLS_ALPHA,
+            warm_start=True), "IRLS"),
+        "LASSO": (Lasso(
+            alpha=Config.LASSO_ALPHA_OPTIMAL,
+            max_iter=Config.LASSO_MAX_ITER), "LASSO"),
+        "CART": (DecisionTreeRegressor(
+            random_state=Config.RANDOM_STATE,
+            max_depth=Config.CART_MAX_DEPTH,
+            min_samples_split=Config.CART_MIN_SAMPLES_SPLIT,
+            min_samples_leaf=Config.CART_MIN_SAMPLES_LEAF), "CART")
     }
     return [all_models[name] for name in model_names if name in all_models]
 
 
-def plot_optima_comparison(comparison_results: list[dict], output_figures: Path):
-    """
-    Generates a bar chart comparing Test MAE across different identified optima.
-    """
-    if not comparison_results:
-        return
+def _plot_cart_tree(df: pd.DataFrame, features: list[str], output_figures: Path, subset_name: str):
+    """Generates a visual representation of the Decision Tree (CART)."""
+    model, _ = get_model_definitions(["CART"])[0]
+    # Fit on all data for visualization purposes
+    model.fit(df[features], df["total_UPDRS"])
 
-    df_comp = pd.DataFrame(comparison_results)
-    plt.figure(figsize=(10, 6))
-    df_comp = df_comp.sort_values('Features')
-
-    labels = [f"Step {row['Step']}\n({row['Features']} Feats)" for _, row in df_comp.iterrows()]
-
-    bars = plt.bar(labels, df_comp['Test MAE'], color='#e74c3c', width=0.6)
-
-    for bar in bars:
-        yval = bar.get_height()
-        plt.text(bar.get_x() + bar.get_width()/2, yval + 0.05, f'{yval:.3f}',
-                 ha='center', va='bottom', fontweight='bold')
-
-    plt.title("Performance Comparison: Identified BIC Optima (Total UPDRS)")
-    plt.ylabel("Test MAE")
-    plt.grid(axis='y', alpha=0.3)
-
-    save_path = output_figures / "optima_performance_comparison.png"
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    plt.close()
-    logger_inst.info(f"Optima comparison graph saved to {save_path}")
-
-
-def visualize_cart_tree(model: DecisionTreeRegressor, features: list[str], output_path: Path) -> None:
-    """Generates a high-resolution visualization of the Decision Tree."""
     plt.figure(figsize=(20, 10))
-    plot_tree(model, feature_names=features, filled=True, rounded=True, fontsize=10, max_depth=4)
-    plt.title("CART Decision Tree Structure")
-    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plot_tree(model, feature_names=features, filled=True, rounded=True, fontsize=10)
+    plt.title(f"Decision Tree Structure - {subset_name} Set")
+
+    filename = f"cart_tree_{subset_name.lower()}.png"
+    plt.savefig(output_figures / filename, dpi=300, bbox_inches='tight')
     plt.close()
 
 
-def _generate_final_visualization(df: pd.DataFrame, features: list[str], output_dir: Path) -> None:
-    """Helper to train and visualize the final CART model on the full dataset."""
-    logger_inst.info("Generating final CART decision tree visualization...")
-    final_cart = DecisionTreeRegressor(random_state=42, max_depth=4)
-    final_cart.fit(df[features], df["total_UPDRS"])
-    visualize_cart_tree(final_cart, features, output_dir / "cart_final_structure.png")
-
-
-def _plot_results(results_df: pd.DataFrame, output_figures: Path):
-    """
-    Generates performance comparison plots.
-    Updated Stage 4 graph to show ALL models for Subject-Wise Total UPDRS.
-    """
+def _plot_results(results_df: pd.DataFrame, output_figures: Path, stage_label: str, subset_name: str):
+    """Generates side-by-side comparison of CV methods."""
     sns.set_theme(style="whitegrid")
+    plot_df = results_df[results_df['Target'] == 'total_UPDRS'].copy()
+    if plot_df.empty: return
 
-    # 1. Overfitting Analysis (Train vs Test)
-    metrics_melted = results_df.melt(
-        id_vars=['Method', 'Target', 'Model'],
-        value_vars=['Train MAE', 'Test MAE'],
-        var_name='Metric', value_name='MAE'
-    )
+    plt.figure(figsize=(12, 6))
+    model_order = ["LS", "IRLS", "LASSO", "CART"] if "LS" in plot_df['Model'].values else ["IRLS", "CART"]
 
-    for target in results_df['Target'].unique():
-        plt.figure(figsize=(12, 6))
-        subset = metrics_melted[metrics_melted['Target'] == target]
-        sns.barplot(data=subset, x='Model', y='MAE', hue='Metric')
-        plt.title(f"Model Overfitting Analysis: Train vs Test MAE ({target})")
-        plt.savefig(output_figures / f"overfitting_analysis_{target}.png")
-        plt.close()
+    ax = sns.barplot(data=plot_df, x="Model", y="Test MAE", hue="Method", palette="coolwarm", order=model_order)
+    plt.title(f"{stage_label}: {subset_name} Set Performance")
+    plt.ylim(0, plot_df['Test MAE'].max() * 1.3)
 
-    # 2. Stage 4 Baseline Comparison: Focused on Subject-Wise Total UPDRS
-    # This prevents misleading averaging and shows all 4 models side-by-side
-    sw_total_df = results_df[(results_df['Target'] == 'total_UPDRS') &
-                             (results_df['Method'] == 'Subject-Wise')]
+    for p in ax.patches:
+        if p.get_height() > 0:
+            ax.annotate(f'{p.get_height():.2f}', (p.get_x() + p.get_width() / 2., p.get_height()),
+                        ha='center', va='center', xytext=(0, 9), textcoords='offset points', fontweight='bold')
 
-    if not sw_total_df.empty:
-        plt.figure(figsize=(10, 6))
-        sw_total_df = sw_total_df.sort_values('Model')
-
-        bars = plt.bar(sw_total_df['Model'], sw_total_df['Test MAE'], color='#3498db', width=0.6)
-
-        for bar in bars:
-            yval = bar.get_height()
-            plt.text(bar.get_x() + bar.get_width()/2, yval + 0.05, f'{yval:.2f}',
-                     ha='center', va='bottom', fontweight='bold')
-
-        plt.title("Stage 4 Baseline: Subject-Wise Performance Comparison")
-        plt.ylabel("Test MAE (Total UPDRS)")
-        plt.grid(axis='y', alpha=0.3)
-        plt.savefig(output_figures / "stage4_model_performance_comparison.png", dpi=300, bbox_inches='tight')
-        plt.close()
+    filename = f"{stage_label.lower().replace(' ', '_')}_{subset_name.lower()}_comparison.png"
+    plt.savefig(output_figures / filename, dpi=300, bbox_inches='tight')
+    plt.close()
 
 
 def run_cv_logic(model_obj, X, y, cv_generator, groups=None) -> dict:
-    """Executes cross-validation and returns metrics."""
-    cv_results = cross_validate(
-        model_obj, X, y, groups=groups, cv=cv_generator,
-        scoring='neg_mean_absolute_error', return_train_score=True, n_jobs=2
-    )
+    """Executes CV and returns performance metrics."""
+    cv_results = cross_validate(model_obj, X, y, groups=groups, cv=cv_generator,
+                                scoring='neg_mean_absolute_error', return_train_score=True, n_jobs=2)
     return {
         "Train MAE": round(-np.mean(cv_results['train_score']), 2),
         "Test MAE": round(-np.mean(cv_results['test_score']), 2),
@@ -137,65 +92,54 @@ def run_cv_logic(model_obj, X, y, cv_generator, groups=None) -> dict:
 
 
 def run_modeling_pipeline(models: list[str], input_path: Path, output_tables: Path,
-                          output_figures: Path, candidate_sets: dict = None) -> None:
+                          output_figures: Path, candidate_sets: dict = None,
+                          stage_label: str = "Stage 4") -> pd.DataFrame:
     """
-    Coordinates the modeling pipeline with detailed logging for each step.
+    Coordinates modeling. If Stage 6, it skips re-running the full set if possible.
+    Returns the results DataFrame for potential re-use.
     """
-    logger_inst.info(f"Starting Modeling Pipeline for: {models}")
+    logger_inst.info(f"--- Starting {stage_label} Pipeline ---")
     df = pd.read_csv(input_path)
-    targets = ["motor_UPDRS", "total_UPDRS"]
     groups = df["subject_id"]
-
-    # Case A: Evaluated candidates from Stage 6
-    if candidate_sets:
-        logger_inst.info("--- Evaluating Parsimonious Candidate Sets (Stage 6) ---")
-        comparison_data = []
-        for step, feats in candidate_sets.items():
-            if not feats: continue
-            logger_inst.info(f"Running IRLS Evaluation for {step} ({len(feats)} features)...")
-            X, y = df[feats], df["total_UPDRS"]
-            model_obj = HuberRegressor(max_iter=10000, tol=1e-1)
-            cv_gen = GroupShuffleSplit(n_splits=Paths.N_CV_ITERATIONS, test_size=0.1, random_state=42)
-            metrics = run_cv_logic(model_obj, X, y, cv_gen, groups=groups)
-            comparison_data.append({"Step": step, "Features": len(feats), "Test MAE": metrics["Test MAE"]})
-
-        plot_optima_comparison(comparison_data, output_figures)
-
-    # Case B: Standard Baseline Pipeline (Stage 4)
-    logger_inst.info("--- Running Baseline Model Evaluations ---")
-    features = [c for c in df.columns if c not in Paths.SKIP_COLS]
+    targets = ["motor_UPDRS", "total_UPDRS"]
     cv_methods = [
-        (RepeatedKFold(n_splits=10, n_repeats=Paths.N_CV_ITERATIONS, random_state=42), "Random", None),
-        (GroupShuffleSplit(n_splits=Paths.N_CV_ITERATIONS, test_size=0.1, random_state=42), "Subject-Wise", groups)
+        (RepeatedKFold(n_splits=Config.N_FOLDS, n_repeats=Config.N_CV_ITERATIONS, random_state=Config.RANDOM_STATE),
+         "Random", None),
+        (GroupShuffleSplit(n_splits=Config.N_CV_ITERATIONS, test_size=0.1, random_state=Config.RANDOM_STATE),
+         "Subject-Wise", groups)
     ]
 
-    all_results = []
-    for target_col in targets:
-        logger_inst.info(f"Processing Target: {target_col}")
-        X, y = df[features], df[target_col]
+    # --- Case 1: Stage 4 (Baseline on Full Set) ---
+    if stage_label == "Stage 4":
+        features = [c for c in df.columns if c not in Config.SKIP_COLS]
+        all_results = []
+        for target in targets:
+            for cv_gen, method, grp in cv_methods:
+                for model_obj, name in get_model_definitions(models):
+                    metrics = run_cv_logic(model_obj, df[features], df[target], cv_gen, groups=grp)
+                    all_results.append({"Method": method, "Target": target, "Model": name, **metrics})
 
-        for cv_gen, method_name, grp in cv_methods:
-            logger_inst.info(f"  Applying {method_name} Cross-Validation...")
+        res_df = pd.DataFrame(all_results)
+        _plot_results(res_df, output_figures, stage_label, "Full")
+        _plot_cart_tree(df, features, output_figures, "Full")  # Restore CART Plot
+        res_df.to_csv(output_tables / "stage4_full_results.csv", index=False)
+        return res_df
 
-            for model_obj, model_name in get_model_definitions(models):
-                logger_inst.info(f"    Training {model_name}...")
-                metrics = run_cv_logic(model_obj, X, y, cv_gen, groups=grp)
-                all_results.append({
-                    "Method": method_name,
-                    "Target": target_col,
-                    "Model": model_name,
-                    **metrics
-                })
+    # --- Case 2: Stage 6 (Focused on BIC Subset) ---
+    if stage_label == "Stage 6" and candidate_sets:
+        bic_feats = candidate_sets.get("Our BIC Subset (7)")
+        if bic_feats:
+            logger_inst.info(f"Running Stage 6 evaluation ONLY on BIC subset ({len(bic_feats)} features)...")
+            bic_results = []
+            for target in targets:
+                for cv_gen, method, grp in cv_methods:
+                    for model_obj, name in get_model_definitions(models):
+                        metrics = run_cv_logic(model_obj, df[bic_feats], df[target], cv_gen, groups=grp)
+                        bic_results.append({"Method": method, "Target": target, "Model": name, **metrics})
 
-    results_df = pd.DataFrame(all_results)
-
-    # Print summary table
-    logger_inst.info("\n" + "="*90 + "\n" + results_df.to_string(index=False) + "\n" + "="*90)
-
-    _plot_results(results_df, output_figures)
-    results_df.to_csv(output_tables / f"modeling_results_final.csv", index=False)
-
-    if "CART" in models:
-        _generate_final_visualization(df, features, output_figures)
-
-    logger_inst.info("Modeling pipeline completed successfully.")
+            res_df = pd.DataFrame(bic_results)
+            _plot_results(res_df, output_figures, stage_label, "BIC")
+            _plot_cart_tree(df, bic_feats, output_figures, "BIC")  # CART Plot for subset
+            res_df.to_csv(output_tables / "stage6_bic_results.csv", index=False)
+            return res_df
+    logger_inst.info(f"{stage_label} completed successfully.")

@@ -9,7 +9,6 @@ Tsanas et al. (2010), it performs column renaming and feature scaling.
 from __future__ import annotations
 from pathlib import Path
 import pandas as pd
-import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 from src.config import Paths
 
@@ -29,6 +28,7 @@ def load_raw_data(input_path: Path) -> pd.DataFrame:
     Raises:
         FileNotFoundError: If the raw data file is missing.
     """
+
     if not input_path.exists():
         logger_inst.error("Raw data file not found: %s", input_path)
         raise FileNotFoundError(f"Missing raw data at {input_path}. Ensure fetch stage is complete.")
@@ -36,11 +36,13 @@ def load_raw_data(input_path: Path) -> pd.DataFrame:
     logger_inst.info("Loading raw dataset for processing...")
     return pd.read_csv(input_path)
 
+
 def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
     """
     Cleans column names, applies Log Transform to skewed features,
     and normalizes dysphonia features using Min-Max scaling.
     """
+
     # 1. Standardize identifier column names
     if "subject#" in df.columns:
         df = df.rename(columns={"subject#": "subject_id"})
@@ -54,18 +56,7 @@ def preprocess_data(df: pd.DataFrame) -> pd.DataFrame:
     if not feature_cols:
         raise ValueError("Feature selection failed: No dysphonia measures found.")
 
-    # 3. Apply Log Transform to skewed features (|skew| > 1.5)
-    # This reduces the impact of outliers and helps MinMaxScaler spread the data better.
-    # Using log1p (log(1+x)) to handle any potential zero values safely.
-    skew_series = df[feature_cols].skew()
-    high_skew_feats = skew_series[abs(skew_series) > 1.5].index
-
-    if not high_skew_feats.empty:
-        logger_inst.info("Applying Log Transform to %d skewed features: %s",
-                         len(high_skew_feats), list(high_skew_feats))
-        df[high_skew_feats] = np.log1p(df[high_skew_feats])
-
-    # 4. Apply Min-Max Normalization [0, 1]
+    # 3. Apply Min-Max Normalization [0, 1]
     # Now that skewed data is "compressed", the [0, 1] range will be more informative.
     logger_inst.info("Normalizing %d features using Min-Max scaling...", len(feature_cols))
     scaler = MinMaxScaler(feature_range=(0, 1))
@@ -79,6 +70,7 @@ def load_data() -> None:
     Main entrypoint for the data processing stage.
     Coordinates loading, cleaning, and saving the processed dataset.
     """
+
     paths = Paths.from_here()
     input_path = paths.data_raw / "parkinsons_updrs.data"
     output_path = paths.data_processed / "parkinsons_normalized.csv"

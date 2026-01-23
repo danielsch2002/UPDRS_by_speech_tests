@@ -1,95 +1,78 @@
 """
-Project Path Configuration
---------------------------
-This module centralizes all directory and file path logic. By resolving the 
-PROJECT_ROOT dynamically, the pipeline remains functional regardless of the 
-environment it is executed in.
+Project Configuration
+---------------------
+This module centralizes project settings, separated into directory paths
+and algorithmic constants.
 """
 
 from __future__ import annotations
 from pathlib import Path
-import numpy as np
 
-# Resolve the absolute path to the project root (one level up from /src)
+# Resolve the absolute path to the project root
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
 
 class Paths:
     """
-    Static container for project directory paths.
-
-    Provides a clean interface for accessing data, reports, and figure 
-    locations without hard coding strings in the logic modules.
+    Static container for project directory paths only.
+    Used for locating data and saving reports/outputs.
     """
-    # Main Directories
     data = PROJECT_ROOT / "data"
     reports = PROJECT_ROOT / "reports"
 
-    # Data Sub-directories
     data_raw = data / "raw"
     data_processed = data / "processed"
 
-    # Output Sub-directories
     figures = reports / "figures"
     tables = reports / "tables"
 
-    # these are the 16 voice measures from the dataset
+    @classmethod
+    def from_here(cls) -> type[Paths]:
+        """Returns the class to access path members."""
+        return cls
+
+
+class Config:
+    """
+    Project Constants.
+    Includes hyperparameters for regression models and CV settings.
+    """
+
+    # --- Dataset Column Logic ---
     FEATURE_COLS = [
         'Jitter(%)', 'Jitter(Abs)', 'Jitter:RAP', 'Jitter:PPQ5', 'Jitter:DDP',
         'Shimmer', 'Shimmer(dB)', 'Shimmer:APQ3', 'Shimmer:APQ5', 'Shimmer:APQ11',
         'Shimmer:DDA', 'NHR', 'HNR', 'RPDE', 'DFA', 'PPE'
     ]
-
-    # columns we dont want as features
+    # Columns to be excluded from features during training
     SKIP_COLS = ['subject_id', 'age', 'sex', 'test_time', 'motor_UPDRS', 'total_UPDRS']
 
-    # LASSO settings
-    # alpha range: from 0.0001 to 10, logarithmic scale - we try 500 different values
-    ALPHA_MIN = -4   # 10^-4 = 0.0001
-    ALPHA_MAX = 1    # 10^1 = 10
-    N_ALPHAS = 500
-    LASSO_ALPHA_OPTIMAL = 0.0153 # Optimal alpha found during feature selection (yields ~6 features)
+    # --- Model Hyperparameters ---
 
-    @classmethod
-    def get_alpha_range(cls):
-        """
-        Returns the log-spaced alpha range for LASSO.
-        Using cls allows the method to access class attributes safely.
-        """
-        return np.logspace(cls.ALPHA_MIN, cls.ALPHA_MAX, cls.N_ALPHAS)
+    # LASSO Regression Settings
+    LASSO_ALPHA_OPTIMAL = 0.0153
+    LASSO_MAX_ITER = 10000
 
-    # === CART settings ===
-    # these control how big the tree can grow (pruning basically)
-    CART_MAX_DEPTH = 10
-    CART_MIN_SPLIT = 10
-    CART_MIN_LEAF = 5
+    # IRLS (Huber Regressor) Settings
+    IRLS_MAX_ITER = 10000
+    IRLS_TOL = 1e-1
+    IRLS_ALPHA = 0.1
+
+    # CART (Decision Tree) Settings
+    CART_MAX_DEPTH = 6
+    CART_MIN_SAMPLES_SPLIT = 40
+    CART_MIN_SAMPLES_LEAF = 20
+
+    # --- Global Execution Settings ---
     RANDOM_STATE = 42
 
-    # === Cross validation ===
-    N_FOLDS = 10  # 10-fold like in the paper
-    N_CV_ITERATIONS = 1000   # Number of CV repetitions for robust estimates
+    # Cross-Validation Settings
+    # Standard 10-fold CV as mentioned in Tsanas et al. (2010)
+    N_FOLDS = 10
+    # Number of iterations for robust Subject-Wise and Random CV estimates
+    N_CV_ITERATIONS = 100
 
-    # === Expected results ===
-    # the paper found these 6 features to be optimal
-    PAPER_BEST_FEATURES = [
-        'Jitter(Abs)',
-        'Shimmer',
-        'NHR',
-        'HNR',
-        'DFA',
-        'PPE'
-    ]
-
-    # paper's MAE results (for reference)
+    # --- Paper Reference Values (Tsanas et al. 2010) ---
+    # Key benchmarks for result verification
+    PAPER_BEST_FEATURES = ['Jitter(Abs)', 'Shimmer', 'NHR', 'HNR', 'DFA', 'PPE']
     PAPER_MAE_MOTOR = 5.95
     PAPER_MAE_TOTAL = 7.52
-
-    @classmethod
-    def from_here(cls) -> type[Paths]:
-        """
-        Entry point to access the path configuration.
-
-        Returns:
-            The Paths class with resolved directory members.
-        """
-        return cls

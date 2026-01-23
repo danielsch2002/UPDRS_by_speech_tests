@@ -1,100 +1,101 @@
 """
 LASSO Feature Selection Module
 ------------------------------
-Identifies all BIC optima (local and global) for parsimonious modeling.
-Reproduces the methodology of Tsanas et al. (2010).
+Reproduces the feature selection protocol by Tsanas et al. (2010).
+Uses the Least Angle Regression (LARS) algorithm and BIC Calculation
+to identify a parsimonious feature subset for UPDRS prediction.
 """
 
 from __future__ import annotations
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 from pathlib import Path
-from sklearn.linear_model import LassoLarsIC, lars_path
-
-from src.config import Paths
+from sklearn.linear_model import lars_path
+from src.config import Config
 from src.logger import logger_inst
 
 
-def get_features_at_step(X: pd.DataFrame, y: pd.Series, step: int) -> list[str]:
+def run_lasso_pipeline(input_path: Path, output_tables: Path, output_figures: Path) -> dict[str, list[str]]:
     """
-    Extracts feature names for a specific step in the LARS path.
-    Uses lars_path functional interface to avoid attribute errors.
+    Executes the LASSO selection pipeline and logs each step of the BIC path.
     """
-    if step == 0:
-        return []
-    # Compute the full regularization path to extract coefficients at 'step'
-    _, _, coefs = lars_path(X.values, y.values, method='lasso')
-    current_coefs = coefs[:, step]
-    return [X.columns[i] for i in range(len(current_coefs)) if current_coefs[i] != 0]
+    logger_inst.info("=== Stage 5: LASSO Selection ===")
 
-
-def run_lasso_pipeline(input_path: Path, output_tables: Path, output_figures: Path) -> dict[int, list[str]]:
-    """
-    Executes selection and returns a dictionary of all optimal feature sets {step: [features]}.
-    Features aligned printing blocks to prevent logger-induced misalignment.
-    """
-    logger_inst.info("=== Starting Stage 5: Multi-Optima Feature Selection (LassoLars) ===")
-
-    if not input_path.exists():
-        logger_inst.error("Input path missing: %s", input_path)
-        raise FileNotFoundError(input_path)
-
+    # Load preprocessed data
     df = pd.read_csv(input_path)
-    feature_names = [c for c in df.columns if c not in Paths.SKIP_COLS]
-    X, y = df[feature_names], df["total_UPDRS"]
+    feature_names = [c for c in df.columns if c not in Config.SKIP_COLS]
+    X, y = df[feature_names].values, df["total_UPDRS"].values
 
-    # 1. Fit LassoLarsIC
-    model_bic = LassoLarsIC(criterion='bic', normalize=False, max_iter=2000)
-    model_bic.fit(X, y)
-    bic_values = model_bic.criterion_
+    # Step 1: Generate the LARS path
+    alphas, active, coefs = lars_path(X, y, method='lasso')
 
-    # 2. Automated Optima Detection (Local and Global)
-    optima_steps = []
-    for i in range(len(bic_values)):
-        is_min = True
-        if i > 0 and bic_values[i] >= bic_values[i-1]: is_min = False
-        if i < len(bic_values)-1 and bic_values[i] >= bic_values[i+1]: is_min = False
-        if is_min: optima_steps.append(i)
+    # Step 2: Path Evaluation via BIC
+    n_samples = X.shape[0]
+    p_total_features = len(feature_names)
 
-    # 3. Aligned Summary Table (Built as a single block)
-    w_step, w_bic, w_status = 8, 15, 20
-    header = f"{'Step':<{w_step}} | {'BIC Score':<{w_bic}} | {'Status':<{w_status}}"
-    rule = "-" * len(header)
+    # Panelty parameter
+    gamma = 1.0
 
-    table_lines = [rule, header, rule]
-    global_min_idx = np.argmin(bic_values)
-    for step, val in enumerate(bic_values):
-        status = "GLOBAL MINIMUM" if step == global_min_idx else ("LOCAL MINIMUM" if step in optima_steps else "")
-        table_lines.append(f"{step:<{w_step}} | {val:<{w_bic}.2f} | {status:<{w_status}}")
-    table_lines.append(rule)
+    bic_values = []
+    path_details = []
 
-    # Print the entire table block at once to maintain alignment
-    logger_inst.info("\n" + "\n".join(table_lines))
+    # Log header clearly
+    logger_inst.info(f"{'Step':<5} | {'Alpha':<10} | {'k':<3} | {'BIC Score':<12}")
+    logger_inst.info("-" * 45)
 
-    # 4. Extract and Log Features for each candidate (Built as single blocks)
-    all_optima_sets = {}
-    for step in optima_steps:
-        feats = get_features_at_step(X, y, step)
-        all_optima_sets[step] = feats
+    for i in range(coefs.shape[1]):
+        y_pred = X @ coefs[:, i]
+        mse = np.mean((y - y_pred) ** 2)
 
-        label = "GLOBAL" if step == global_min_idx else "LOCAL"
-        title = f"{label} OPTIMUM AT STEP {step} ({len(feats)} Features)"
+        current_indices = np.where(coefs[:, i] != 0)[0]
+        current_features = [feature_names[idx] for idx in current_indices]
+        k = len(current_features)
+        current_alpha = alphas[i] if i < len(alphas) else 0.0
 
-        feat_block = ["="*55, f"{title:^55}", "-"*55]
-        for i, f in enumerate(feats, 1):
-            feat_block.append(f"{i:>2}. {f:<30}")
-        feat_block.append("="*55)
+        if mse > 0:
+            # BIC Formula to balance fit and complexity
+            standard_bic = n_samples * np.log(mse) + k * np.log(n_samples)
+            ext_penalty = 2 * gamma * k * np.log(p_total_features)
+            bic_val = standard_bic + ext_penalty
+        else:
+            bic_val = np.inf
 
-        # Print the entire feature set block at once
-        logger_inst.info("\n" + "\n".join(feat_block))
+        bic_values.append(bic_val)
 
-    # 5. Save Global Minimum as default CSV for Stage 6
-    best_features = all_optima_sets[global_min_idx]
-    required_cols = best_features + ["subject_id", "motor_UPDRS", "total_UPDRS"]
-    output_csv = Paths.data_processed / "best_features_parkinsons_normalized.csv"
-    df[required_cols].to_csv(output_csv, index=False)
+        # Log each step individually to ensure visibility in terminal
+        logger_inst.info(f"{i:<5} | {current_alpha:<10.6f} | {k:<3} | {bic_val:<12.2f}")
 
-    logger_inst.info(f"Lasso analysis complete. Found {len(optima_steps)} candidate optima.")
+        path_details.append({
+            "Step": i,
+            "Alpha": current_alpha,
+            "k": k,
+            "BIC": bic_val,
+            "Features": current_features
+        })
 
-    # Return the dictionary to main.py for comparative modeling in Stage 6
-    return all_optima_sets
+    # Step 3: Optimization Result Extraction
+    best_idx = np.argmin(bic_values)
+    optimal_step_data = path_details[best_idx]
+    best_features = optimal_step_data["Features"]
+    best_alpha = optimal_step_data["Alpha"]
+
+    logger_inst.info("-" * 45)
+    logger_inst.info(f"Optimal Alpha (min BIC): {best_alpha:.6f}")
+    logger_inst.info(f"Selected {len(best_features)} features at Step {best_idx}.")
+    logger_inst.info(f"Final Subset: {best_features}")
+
+    # Visualization
+    plt.figure(figsize=(10, 6))
+    plt.plot(range(len(bic_values)), bic_values, marker='o', color='purple', label=f'BIC (gamma={gamma})')
+    plt.axvline(best_idx, color='black', linestyle='--', label=f'Optimal k={len(best_features)}')
+    plt.xlabel('Model Complexity (LARS Steps)')
+    plt.ylabel('BIC Value')
+    plt.title(f'Feature Selection: BIC Optimization (gamma={gamma})')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+
+    plt.savefig(output_figures / "lasso_ic_comparison.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
+    return {"BIC_Optimal": best_features}
