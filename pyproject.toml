@@ -1,0 +1,16 @@
+[project]
+name = "UPDRS_by_speech_tests"
+version = "0.1.0"
+dependencies = [
+    "pandas",
+    "numpy",
+    "matplotlib",
+    "scikit-learn",
+    "seaborn",
+    "scipy"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest"
+]
